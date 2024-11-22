@@ -1,0 +1,23 @@
+{
+  "name": "solanaalert",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@raydium-io/raydium-sdk-v2": "^0.1.84-alpha",
+    "@solana/web3.js": "^1.95.5",
+    "axios": "^1.7.7",
+    "bs58": "^6.0.0",
+    "cheerio": "^1.0.0",
+    "fs": "^0.0.1-security",
+    "node-fetch": "^3.3.2",
+    "node-telegram-bot-api": "^0.66.0",
+    "path": "^0.12.7"
+  }
+}
