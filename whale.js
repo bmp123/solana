@@ -190,11 +190,12 @@ function subscribeToWallet(address) {
 
                 const message = `
 🐳 **Transaction detected for wallet ${address}:**
+📷 [Параметры](https://cdn.dexscreener.com/token-images/og/solana/${tokenMint}?timestamp=${Date.now()})
 🔗 [View on Solscan](https://solscan.io/tx/${signature})
 💸 **SOL:** ${amountInSol} SOL
 🎯 **Token:** ${tokenMint}
-📷 [Параметры](https://cdn.dexscreener.com/token-images/og/solana/${tokenMint}?timestamp=${Date.now()})
-📊 Dexscreener: [Open on Dexscreener](https://dexscreener.com/solana/${tokenMint})
+
+📊 Dexscreener: [Open on Dexscreener]https://dexscreener.com/solana/dlvxirootbdh6urrthzkyvqz4zqrxzxmuozrkuvarfro?maker=${address})
 `;
 
                 // Send message to all users
@@ -232,7 +233,7 @@ function unsubscribeFromWallet(address) {
 
 // Subscribe to all wallets on startup
 function subscribeToAllWallets() {
-    whales.forEach(wallet => subscribeToWallet(wallet));
+    whales.forEach(wallet => wallet.wallet && subscribeToWallet(wallet.wallet));
 }
 
 // Commands
@@ -241,14 +242,19 @@ bot.onText(/\/hookwhale/, (msg) => {
     bot.sendMessage(chatId, 'Send me the whale wallet address to track.').then(() => {
         bot.once('message', (msg) => {
             const wallet = msg.text.trim();
-            if (wallet && !whales.includes(wallet)) {
-                whales.push(wallet);
-                saveWhalesToFile();
-                subscribeToWallet(wallet);
-                bot.sendMessage(chatId, `Whale wallet ${wallet} is now being tracked.`);
-            } else {
-                bot.sendMessage(chatId, `Wallet ${wallet} is already being tracked or invalid.`);
-            }
+            bot.sendMessage(chatId, 'Send me the whale name').then(() => {
+                bot.once('message', (nmsg) => {
+                    const name = nmsg.text.trim();
+                    if (wallet && name && !whales.includes({wallet, name})) {
+                        whales.push({wallet, name});
+                        saveWhalesToFile();
+                        subscribeToWallet(wallet);
+                        bot.sendMessage(chatId, `Whale wallet ${wallet} is now being tracked.`);
+                    } else {
+                        bot.sendMessage(chatId, `Wallet ${wallet} is already being tracked or invalid.`);
+                    }
+                });
+            });
         });
     });
 });
@@ -274,13 +280,25 @@ bot.onText(/\/releasewhale/, (msg) => {
         });
     });
 });
+bot.onText(/\/dropall/, (msg) => {
+    const chatId = msg.chat.id;
+    if (whales.length === 0) {
+        bot.sendMessage(chatId, 'No wallets are currently being tracked.');
+        return;
+    }
+    whales.forEach(item => item && unsubscribeFromWallet(item.wallet))
+    whales = [];
+    saveWhalesToFile();
+    bot.sendMessage(chatId, `Whale wallets has been removed.`);
+    
+});
 
 bot.onText(/\/listwhales/, (msg) => {
     const chatId = msg.chat.id;
     if (whales.length === 0) {
         bot.sendMessage(chatId, 'No wallets are currently being tracked.');
     } else {
-        const whaleList = whales.map((wallet, index) => `${index + 1}. ${wallet}`).join('\n');
+        const whaleList = whales.map((wallet, index) => `${index + 1}. ${wallet.name} ${wallet.wallet}`).join('\n');
         bot.sendMessage(chatId, `Tracked whale wallets:\n\n${whaleList}`);
     }
 });

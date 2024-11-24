@@ -2,156 +2,112 @@ import {
     Connection,
     Keypair,
     Transaction,
-    VersionedTransaction,
     sendAndConfirmTransaction,
-    PublicKey
-  } from "@solana/web3.js";
-  import axios from "axios";
-  import bs58 from "bs58";
-  // Параметры
-    const RPC_ENDPOINT = 'https://api.mainnet-beta.solana.com';
-    const PURCHASE_AMOUNT_SOL = 0.005; // Сумма покупки в SOL
-    const TARGET_MULTIPLIER = 1.9; // Множитель для продажи токена
-    const CHECK_INTERVAL = 5000; // Интервал проверки цены (в миллисекундах)
-    const SOLADRESS = "So11111111111111111111111111111111111111112"
-    // Ваш приватный ключ в формате Base58
-    const PRIVATE_KEY_BASE58 = "5tfBhabwJpPhSvsRDJwtSjGh278FgSLhKuYDM7iWKckLoGcF3c8F7RV4kBS7Zb68p8s5rsNmrTsuhJfSxWvQcdqT";
+    PublicKey,
+} from "@solana/web3.js";
+import axios from "axios";
+import bs58 from "bs58";
+import { API_URLS } from '@raydium-io/raydium-sdk-v2'
+import { getAssociatedTokenAddress, createAssociatedTokenAccountInstruction } from '@solana/spl-token';
 
-    // Преобразуем приватный ключ из Base58 в Uint8Array
-    const secretKey = Uint8Array.from(bs58.decode(PRIVATE_KEY_BASE58));
-    const wallet = Keypair.fromSecretKey(secretKey);
-    console.log(`Wallet loaded: ${wallet.publicKey.toBase58()}`);
+// Параметры
+const RPC_ENDPOINT = 'https://api.mainnet-beta.solana.com';
+const PURCHASE_AMOUNT_SOL = 0.0005; // Сумма покупки в SOL
+const TARGET_MULTIPLIER = 1.9; // Множитель для продажи токена
+const CHECK_INTERVAL = 5000; // Интервал проверки цены (в миллисекундах)
+const SOL_ADDRESS = "So11111111111111111111111111111111111111112";
+const feeInSol = 0.0002
+// Ваш приватный ключ в формате Base58
+const PRIVATE_KEY_BASE58 = "3dXJcptxetMHPn8gsDr8KWTioQT1jJTA4gvK7ccpZU1LFXDKdHAVvHMzQKWNKHbhQEnqBKLQq3QrgqsJ7bMeHtGC";
 
-    // Подключение к Solana
-    const connection = new Connection(RPC_ENDPOINT, 'confirmed');
-    // Получение пула ликвидности для токена
-    async function getLiquidityPools(tokenMint) {
-        
-    
-        try {
-            // Получение всех счетов, связанных с Raydium AMM
-            const accounts = await connection.getProgramAccounts(new PublicKey("RVKd61ztZW9ipAdUCeRUc9J6HuAmDQdj4CaHkG3iSAW"));
-    
-            console.log(`Найдено ${accounts.length} аккаунтов для программы Raydium AMM.`);
-    
-            const matchingPools = [];
-    
-            for (const account of accounts) {
-                const data = account.account.data;
-    
-                // Парсинг данных пула (определите формат для Raydium)
-                const pool = parsePoolData(data);
-                if (!pool) continue;
-    
-                // Проверяем, связан ли пул с заданным токеном
-                if (pool.mintA === tokenMint || pool.mintB === tokenMint) {
-                    matchingPools.push(pool);
-                }
-            }
-    
-            if (matchingPools.length === 0) {
-                console.log(`Пул ликвидности для токена ${tokenMint} не найден.`);
-                return null;
-            }
-    
-            console.log(`Найдено ${matchingPools.length} пул(ов) для токена ${tokenMint}.`, matchingPools);
-            return matchingPools;
-        } catch (error) {
-            console.error(`Ошибка при получении данных пула: ${error.message}`);
-            return null;
-        }
-    }
-    
-    function parsePoolData(data) {
-        try {
-            // Определите и реализуйте формат данных пула Raydium
-            const mintA = data.slice(0, 32); // Первый токен пула (пример)
-            const mintB = data.slice(32, 64); // Второй токен пула (пример)
-    
-            return {
-                mintA: new PublicKey(mintA).toString(),
-                mintB: new PublicKey(mintB).toString(),
-            };
-        } catch (error) {
-            console.error('Ошибка парсинга данных пула:', error.message);
-            return null;
-        }
-    }
-    
+// Преобразуем приватный ключ из Base58 в Uint8Array
+const secretKey = Uint8Array.from(bs58.decode(PRIVATE_KEY_BASE58));
+const wallet = Keypair.fromSecretKey(secretKey);
+console.log(`Wallet loaded: ${wallet.publicKey.toBase58()}`);
 
-// Рассчитываем цену токена в SOL
-async function calculateTokenPriceInSol(tokenMint) {
-    const pool = await getLiquidityPools(tokenMint)
-console.log(pool)
-    if (!pool) {
-        console.error(`Не удалось найти пул для токена ${tokenMint}`);
-        return null;
-    }
+// Подключение к Solana
+const connection = new Connection(RPC_ENDPOINT, 'confirmed');
 
-    // Определяем токен и SOL в пуле
-    const isTokenMintA = pool.mintA === tokenMint;
-    const tokenReserve = isTokenMintA ? pool.reserveA : pool.reserveB;
-    const solReserve = isTokenMintA ? pool.reserveB : pool.reserveA;
-
-    // Рассчитываем цену токена в SOL
-    const priceInSol = solReserve / tokenReserve;
-
-    console.log(`Цена токена ${tokenMint} в SOL: ${priceInSol}`);
-    return priceInSol;
-}
-  async function performSwap(to, from, amount) {
-  
-    // Swap parameters
-    const params = new URLSearchParams({
-      from: from, // SOL
-      to: to, // USDC
-      amount: amount, // From amount
-      slip: 5, // Slippage
-      fee: 0.002,
-      payer: wallet.publicKey.toBase58()
-    });
-  
+// Получение котировки свопа
+async function getQuote(inputMint, outputMint, amount, slippage, txVersion) {
     try {
-      // Get swap transaction
+        
       const response = await axios.get(
-        `https://swap.solxtence.com/swap?${params}`
+        `${API_URLS.SWAP_HOST}/compute/swap-base-in`,
+        {
+          params: {
+            inputMint,
+            outputMint,
+            amount,
+            slippageBps: slippage * 100,
+            txVersion
+          }
+        }
       );
-      console.log("RESPONSE: ",  response.data)
-      const { serializedTx, txType } = response.data.transaction;
-      
-      // Fetch the latest blockhash
-      const { blockhash } = await connection.getLatestBlockhash();
-      
-      // Deserialize and sign the transaction
-      let transaction;
-      if (txType === "v0") {
-        transaction = VersionedTransaction.deserialize(
-          Buffer.from(serializedTx, "base64")
-        );
-        transaction.message.recentBlockhash = blockhash;
-        transaction.sign([wallet]);
-        const signature = await sendAndConfirmTransaction(connection, transaction);
-        console.log("Swap successful! Transaction signature:", signature);
-      } else {
-        transaction = Transaction.from(Buffer.from(serializedTx, "base64"));
-        transaction.recentBlockhash = blockhash;
-        transaction.sign(wallet);
-        const signature = await sendAndConfirmTransaction(connection, transaction, [wallet]);
-        console.log("Swap successful! Transaction signature:", signature);
+  
+      if (response.status !== 200 || !response.data) {
+        console.error('Ошибка получения данных котировки.', response.data);
+        return null;
       }
   
-      console.log("2 ", transaction)
-      // Send and confirm the transaction
-      
-      
-      
-      return response.data
+      return response.data;
     } catch (error) {
-      console.error("Error performing swap:", error);
-      return null
+      console.error('Ошибка получения котировки:', error.message);
+      return null;
     }
   }
-// Получение токенов из логов транзакции
+async function performSwap(toMint, fromMint, amountInSol) {
+    try {
+        const amountInLamports = Math.floor(amountInSol * 1_000_000_000); // SOL → лампорты
+        const computeUnitPriceMicroLamports = Math.floor(feeInSol * 1_000_000_000); // SOL → микролампорты
+        const isInputSol = fromMint === SOL_ADDRESS;
+        const isOutputSol = toMint === SOL_ADDRESS;
+
+        console.log(`Параметры свопа:`);
+        console.log(`От: ${fromMint}, К: ${toMint}, Сумма: ${amountInLamports} лампортов`);
+        console.log(`Приоритетная комиссия: ${computeUnitPriceMicroLamports} микролампорты (${feeInSol} SOL)`);
+
+        // Получение котировки
+        const swapResponse = await getQuote(fromMint, toMint, amountInLamports, 0.05, 'V1');
+        if (!swapResponse) {
+            console.error('Не удалось получить данные свопа.');
+            return null;
+        }
+
+        // Получение транзакций
+        const { data: swapTransactions } = await axios.post(
+            `${API_URLS.SWAP_HOST}/transaction/swap-base-in`,
+            {
+                computeUnitPriceMicroLamports: String(computeUnitPriceMicroLamports), // Комиссия в микролампортах
+                swapResponse,
+                txVersion: "V0", // Использование версии транзакций
+                wallet: wallet.publicKey.toBase58(),
+                wrapSol: isInputSol,
+                unwrapSol: isOutputSol,
+                // inputAccount: isInputSol ? undefined : await getOrCreateAssociatedTokenAccount(fromMint),
+                // outputAccount: isOutputSol ? undefined : await getOrCreateAssociatedTokenAccount(toMint),
+            }
+        );
+
+        if (!swapTransactions.success) {
+            console.error("Ошибка выполнения свопа через Raydium.", swapTransactions);
+            return null;
+        }
+
+        // Десериализация и отправка транзакций
+        for (const tx of swapTransactions.data) {
+            const transaction = Transaction.from(Buffer.from(tx.transaction, "base64"));
+            transaction.sign(wallet);
+            const signature = await sendAndConfirmTransaction(connection, transaction, [wallet]);
+            console.log("Своп успешен! Подпись транзакции:", signature);
+        }
+
+        return swapResponse;
+    } catch (error) {
+        console.error("Ошибка выполнения свопа:", error.message);
+        return null;
+    }
+}
 function getMostFrequentToken(transactionData) {
     const tokenAddresses = [];
     if (!transactionData || !transactionData.meta) {
@@ -169,10 +125,7 @@ function getMostFrequentToken(transactionData) {
         }
     }
 
-    // Убираем токены SOL и определяем, какой токен появился чаще всего
-    const filteredTokens = tokenAddresses.filter(
-        (item) => item !== SOLADRESS
-    );
+    const filteredTokens = tokenAddresses.filter((item) => item !== SOL_ADDRESS);
 
     const tokenFrequency = filteredTokens.reduce((acc, token) => {
         acc[token] = (acc[token] || 0) + 1;
@@ -191,48 +144,70 @@ function getMostFrequentToken(transactionData) {
 
     return mostFrequentToken;
 }
-var t = 0;
+
+async function getOrCreateAssociatedTokenAccount(mint) {
+    try {
+        const associatedTokenAddress = await getAssociatedTokenAddress(
+            new PublicKey(mint), // Mint токена
+            wallet.publicKey // Кошелек пользователя
+        );
+
+        // Проверяем, существует ли токен-аккаунт
+        const accountInfo = await connection.getAccountInfo(associatedTokenAddress);
+        if (!accountInfo) {
+            console.log(`Токен-аккаунт для ${mint} не найден. Создаем новый.`);
+
+            // Создаем транзакцию для создания токен-аккаунта
+            const transaction = new Transaction().add(
+                createAssociatedTokenAccountInstruction(
+                    wallet.publicKey, // Плательщик
+                    associatedTokenAddress, // Новый токен-аккаунт
+                    wallet.publicKey, // Владелец
+                    new PublicKey(mint) // Mint токена
+                )
+            );
+
+            // Подписываем и отправляем транзакцию
+            await sendAndConfirmTransaction(connection, transaction, [wallet]);
+            console.log(`Токен-аккаунт создан: ${associatedTokenAddress.toBase58()}`);
+        } else {
+            console.log(`Токен-аккаунт уже существует: ${associatedTokenAddress.toBase58()}`);
+        }
+
+        return associatedTokenAddress.toBase58();
+    } catch (error) {
+        console.error('Ошибка при создании токен-аккаунта:', error.message);
+        return null;
+    }
+}
+
 // Основной процесс: работа с логами
 (async () => {
     connection.onLogs(new PublicKey('7YttLkHDoNj9wyDur5pM1ejNaAvT9X4eqaYcHQqtj2G5'), async (logInfo) => {
         try {
-            const signature = logInfo.signature;
+            setTimeout(async () => {
+                const signature = logInfo.signature;
                 const tx = await connection.getTransaction(signature, {
                     maxSupportedTransactionVersion: 0,
                 });
-    
+
                 const tokenAddress = getMostFrequentToken(tx);
                 if (!tokenAddress) {
                     console.log("Токен не найден в логах. Пропускаем.");
                     return;
                 }
-    
-                console.log('Новый токен обнаружен:', tokenAddress);
-            return
-           
-            // setTimeout(async () => {
-                // const signature = logInfo.signature;
-                // const tx = await connection.getTransaction(signature, {
-                //     maxSupportedTransactionVersion: 0,
-                // });
-    
-                // const tokenAddress = getMostFrequentToken(tx);
-                // if (!tokenAddress) {
-                //     console.log("Токен не найден в логах. Пропускаем.");
-                //     return;
-                // }
-    
-                console.log('Новый токен обнаружен:', tokenAddress);
-    
-                const sign = await performSwap(tokenAddress, SOLADRESS, PURCHASE_AMOUNT_SOL)
-                if (!sign) {
+
+                console.log("Новый токен обнаружен:", tokenAddress);
+
+                const swapResult = await performSwap(tokenAddress, SOL_ADDRESS, PURCHASE_AMOUNT_SOL);
+                if (!swapResult) {
                     console.error(`Не удалось купить токен ${tokenAddress}.`);
                     return;
                 }
-    t++
+
                 console.log(`Ожидаем роста цены для токена ${tokenAddress}...`);
-                const targetPrice = sign.swapDetails.priceData.spotPrice * TARGET_MULTIPLIER;
-    
+                const targetPrice = swapResult.swapDetails.priceData.spotPrice * TARGET_MULTIPLIER;
+
                 // Ожидание роста цены и продажа
                 const intervalId = setInterval(async () => {
                     const currentPrice = await calculateTokenPriceInSol(tokenAddress);
@@ -240,13 +215,13 @@ var t = 0;
                         console.error(`Ошибка получения текущей цены для ${tokenAddress}.`);
                         return;
                     }
-    
+
                     console.log(`Текущая цена для ${tokenAddress}: ${currentPrice}`);
                     if (currentPrice >= targetPrice) {
                         clearInterval(intervalId);
                         console.log(`Целевая цена достигнута (${currentPrice}). Продаём токен.`);
-    
-                        const sellSuccess = await performSwap(SOLADRESS, tokenAddress, sign.swapDetails.outputAmount)
+
+                        const sellSuccess = await performSwap(SOL_ADDRESS, tokenAddress, swapResult.swapDetails.outputAmount);
                         if (sellSuccess) {
                             console.log(`Токен ${tokenAddress} успешно продан.`);
                         } else {
@@ -254,11 +229,9 @@ var t = 0;
                         }
                     }
                 }, CHECK_INTERVAL);
-            // }, 10000)
-            
+            }, 40000);
         } catch (error) {
-            console.error('Ошибка:', error.message);
+            console.error("Ошибка:", error.message);
         }
     });
 })();
-
